@@ -62,7 +62,7 @@ func UpdateTimers(wbs *events.WorldBossSchedule, bot *tgbotapi.BotAPI) {
 			continue
 		}
 		remaining := time.Until(wb.SpawnTime)
-		if remaining < time.Duration(u.WBAlarmTimer)*time.Minute+time.Duration(updateInterval)*time.Second {
+		if remaining < time.Duration(u.WBAlarmTimer)*time.Minute+time.Duration(updateInterval*1.5)*time.Second {
 			if u.WBNotifiedOn == wb.SpawnTime {
 				continue
 			}
@@ -88,13 +88,13 @@ func MakeTimer(chatID int64, alarmTime int, duration time.Duration, bot *tgbotap
 	msg.Text = fmt.Sprintf(WBAlarmStr, boss.Name, PluralizeStr(alarmTime, "minute", "minutes", true))
 	_, err := bot.Send(msg)
 	if err != nil {
-		log.Printf("Error sending message: %s", err)
+		log.Printf("Error sending message to Chat ID %d: %s", chatID, err)
 	}
 }
 
 func LoadData(fPath string) (data *Data, err error) {
 	f, errOpenFile := os.OpenFile(fPath, os.O_CREATE|os.O_RDONLY, 0644)
-	// log.Printf("Reading from %s ... ", fPath)
+	// log.Printf("Reading from %q ... ", fPath)
 	bytes, errReadAll := io.ReadAll(f)
 	// log.Printf("Read %d bytes", len(bytes))
 	errUnmarshal := json.Unmarshal(bytes, &data)
@@ -105,7 +105,7 @@ func LoadData(fPath string) (data *Data, err error) {
 func SaveData(fPath string, d *Data) (err error) {
 	f, errOpenFile := os.OpenFile(fPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	bytes, errMarshal := json.Marshal(&d)
-	log.Printf("Writing to %s ...", fPath)
+	log.Printf("Writing to %q ...", fPath)
 	n, errWrite := f.Write(bytes)
 	if errWrite != nil {
 		return errWrite
@@ -315,15 +315,13 @@ func PluralizeStr(n int, singular string, plural string, includeN bool) (result 
 	return result
 }
 
+var usageStr string = "*Diabler Usage*\n\n" +
+	"`/diabler utc` | Show your local UTC offset\n" +
+	"`/diabler utc <hours>` | Set UTC offset to *<hours>*. Can be negative\n\n" +
+	"`/diabler wb` | Show next World Boss\n" +
+	"`/diabler wb <minutes>` | Set the alarm to *<minutes>* or *0* to disable"
+
 const (
-	usageStr = `*Diabler Usage*
-
-*/diabler utc* | Show your local UTC offset
-*/diabler utc <hours>* | Set UTC offset to *<hours>*. Can be negative
-
-*/diabler wb* | Show next World Boss
-*/diabler wb <minutes>* | Set the alarm to *<minutes>* or *0* to disable 
-`
 	wbNextSpawnTimeStr = "*%s* | `%s`\n%s %s."
 	UTCOffsetStr       = "Time Offset | `%s`\nUse `/diabler utc <hours>` command to change it."
 	UTCOffsetSetStr    = "Time Offset | `%s` \u2794 `%s`"
