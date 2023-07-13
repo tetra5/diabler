@@ -19,3 +19,20 @@
 
 # Go workspace file
 go.work
+
+# VS Code
+.vscode
+
+# Data
+data
+diabler.json
+diabler-data
+
+# Build
+__debug_bin
+
+# IDEA
+.idea
+
+# Misc 
+notes.txt
