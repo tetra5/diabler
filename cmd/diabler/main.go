@@ -274,8 +274,28 @@ func main() {
 				if err != nil {
 					log.Printf("Error editing %q message: %s", "diabler-settings-time-offset", err)
 				}
+			case "diabler-settings-time-offset-reset":
+				data.Users[idx].UTCOffset = 0
+				// TODO: error handling
+				SaveData(dataPath, data)
+				data, _ = LoadData(dataPath)
+				textLines := []string{
+					SettingsMenuTimeOffsetStr,
+					fmt.Sprintf(TimeOffsetStr, FormatUTCOffset(data.Users[idx].UTCOffset)),
+				}
+				editMsg.Text = strings.Join(textLines, "\n")
+				editMsg.ReplyMarkup = &settingsTimeOffsetMenuMarkup
+				_, err = bot.Send(editMsg)
+				if err != nil {
+					log.Printf("Error editing %q message: %s", "diabler-settings-time-offset-reset", err)
+				}
 			case "diabler-settings-time-offset-decrease":
-				data.Users[idx].UTCOffset -= 1
+				if data.Users[idx].UTCOffset <= -12 {
+					data.Users[idx].UTCOffset = -12
+				} else {
+					data.Users[idx].UTCOffset -= 1
+				}
+				// TODO: error handling
 				SaveData(dataPath, data)
 				data, _ = LoadData(dataPath)
 				textLines := []string{
@@ -289,7 +309,11 @@ func main() {
 					log.Printf("Error editing %q message: %s", "diabler-settings-time-offset-decrease", err)
 				}
 			case "diabler-settings-time-offset-increase":
-				data.Users[idx].UTCOffset += 1
+				if data.Users[idx].UTCOffset >= 14 {
+					data.Users[idx].UTCOffset = 14
+				} else {
+					data.Users[idx].UTCOffset += 1
+				}
 				// TODO: error handling
 				SaveData(dataPath, data)
 				data, _ = LoadData(dataPath)
@@ -504,6 +528,7 @@ var settingsMenuMarkup = tgbotapi.NewInlineKeyboardMarkup(
 var settingsTimeOffsetMenuMarkup = tgbotapi.NewInlineKeyboardMarkup(
 	tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("-1 hour", "diabler-settings-time-offset-decrease"),
+		tgbotapi.NewInlineKeyboardButtonData("Reset", "diabler-settings-time-offset-reset"),
 		tgbotapi.NewInlineKeyboardButtonData("+1 hour", "diabler-settings-time-offset-increase"),
 	),
 	tgbotapi.NewInlineKeyboardRow(
