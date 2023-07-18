@@ -251,7 +251,11 @@ func main() {
 				textLines := []string{
 					SettingsMenuStr,
 					fmt.Sprintf(TimeOffsetStr, FormatUTCOffset(data.Users[idx].UTCOffset)),
-					fmt.Sprintf(WBTimerMenuStr, PluralizeStr(data.Users[idx].WBAlarmTimer, "minute", "minutes", true)),
+				}
+				if data.Users[idx].WBAlarmTimer == 0 {
+					textLines = append(textLines, WBTimerDisabledMenuStr)
+				} else {
+					textLines = append(textLines, fmt.Sprintf(WBTimerMenuStr, PluralizeStr(data.Users[idx].WBAlarmTimer, "minute", "minutes", true)))
 				}
 				editMsg.Text = strings.Join(textLines, "\n")
 				editMsg.ReplyMarkup = &settingsMenuMarkup
