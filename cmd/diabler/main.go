@@ -8,6 +8,8 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/tetra5/diabler/pkg/d4/events"
@@ -22,6 +24,8 @@ const (
 	updateInterval      = 30 // Seconds
 )
 
+var mu sync.Mutex
+
 type Data struct {
 	Users []User `json:"diabler"`
 	// const jsonStr = `
@@ -31,7 +35,8 @@ type Data struct {
 	// 			"chat_id": "123456789",
 	// 			"utc_offset": 0,
 	// 			"wb_notify_period": 0,
-	// 			"wb_notified_on": "2006-01-02T15:04:05Z"
+	// 			"wb_notified_on": "2006-01-02T15:04:05Z",
+	//			"menu_message_id": 0
 	// 		}
 	// 	]
 	// }
@@ -43,7 +48,7 @@ type User struct {
 	UTCOffset     int       `json:"utc_offset,omitempty"`
 	WBAlarmTimer  int       `json:"wb_alarm_timer,omitempty"`
 	WBNotifiedOn  time.Time `json:"wb_notified_on,omitempty"`
-	MenuMessageID int       `json:"menu_message_id"`
+	MenuMessageID int       `json:"menu_message_id,omitempty"`
 }
 
 func UpdateTimers(wbs *events.WorldBossSchedule, bot *tgbotapi.BotAPI) {
@@ -58,7 +63,7 @@ func UpdateTimers(wbs *events.WorldBossSchedule, bot *tgbotapi.BotAPI) {
 		}
 		chatID, err := strconv.ParseInt(u.ChatID, 10, 64)
 		if err != nil {
-			log.Printf("Error parsing Chat ID %s: %s", u.ChatID, err)
+			log.Printf("Error parsing Chat ID %q: %s", u.ChatID, err)
 			continue
 		}
 		remaining := time.Until(wb.SpawnTime)
@@ -67,7 +72,7 @@ func UpdateTimers(wbs *events.WorldBossSchedule, bot *tgbotapi.BotAPI) {
 				continue
 			}
 			timerDuration := remaining - time.Duration(u.WBAlarmTimer)*time.Minute
-			log.Printf("Setting %s timer for %d ...", timerDuration.String(), chatID)
+			log.Printf("Setting %s timer for %q ...", timerDuration.String(), chatID)
 			go MakeTimer(chatID, u.WBAlarmTimer, timerDuration, bot, wb)
 			data.Users[i].WBNotifiedOn = wb.SpawnTime
 			err = SaveData(dataPath, data)
@@ -88,11 +93,13 @@ func MakeTimer(chatID int64, alarmTime int, duration time.Duration, bot *tgbotap
 	msg.Text = fmt.Sprintf(WBAlarmStr, boss.Name, PluralizeStr(alarmTime, "minute", "minutes", true))
 	_, err := bot.Send(msg)
 	if err != nil {
-		log.Printf("Error sending message to Chat ID %d: %s", chatID, err)
+		log.Printf("Error sending message to Chat ID %q: %s", chatID, err)
 	}
 }
 
 func LoadData(fPath string) (data *Data, err error) {
+	mu.Lock()
+	defer mu.Unlock()
 	f, errOpenFile := os.OpenFile(fPath, os.O_CREATE|os.O_RDONLY, 0644)
 	// log.Printf("Reading from %q ... ", fPath)
 	bytes, errReadAll := io.ReadAll(f)
@@ -103,6 +110,8 @@ func LoadData(fPath string) (data *Data, err error) {
 }
 
 func SaveData(fPath string, d *Data) (err error) {
+	mu.Lock()
+	defer mu.Unlock()
 	f, errOpenFile := os.OpenFile(fPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	bytes, errMarshal := json.Marshal(&d)
 	log.Printf("Writing to %q ...", fPath)
@@ -135,7 +144,7 @@ func NewUser(chatID int64) (user User) {
 		WBAlarmTimer:  defaultWBAlarmTimer,
 		WBNotifiedOn:  time.Unix(0, 0),
 		ChatID:        strconv.FormatInt(chatID, 10),
-		MenuMessageID: -1,
+		MenuMessageID: 0,
 	}
 }
 
@@ -154,26 +163,34 @@ func main() {
 	updateConfig.Timeout = timeout
 	log.Printf("Telegram: @%s, update timeout %s", &bot.Self, PluralizeStr(timeout, "second", "seconds", true))
 
-	// wbs := events.NewWorldBossSchedule()
+	wbs := events.NewWorldBossSchedule()
 
-	// ticker := time.NewTicker(time.Second * updateInterval)
-	// go func() {
-	// 	for {
-	// 		<-ticker.C
-	// 		go UpdateTimers(wbs, bot)
-	// 	}
-	// }()
+	ticker := time.NewTicker(time.Second * updateInterval)
+	go func() {
+		for {
+			<-ticker.C
+			go UpdateTimers(wbs, bot)
+		}
+	}()
 
 	for update := range bot.GetUpdatesChan(updateConfig) {
-		if update.Message == nil {
-			continue
-		}
-		if !update.Message.IsCommand() {
+		var chatID int64
+		if update.Message != nil {
+			chatID = update.Message.Chat.ID
+		} else if update.CallbackQuery != nil {
+			chatID = update.CallbackQuery.Message.Chat.ID
+		} else {
 			continue
 		}
 
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
+		msg := tgbotapi.NewMessage(chatID, "")
 		msg.ParseMode = tgbotapi.ModeMarkdown
+
+		// This flag decides if we should store message ID for the menu system to work properly.
+		// Basically the "menu system" is just an ordinary chat message and there is an API call to
+		// modify its contents being it text or markup (inline buttons) or both simultaneously.
+		// Keeping that in mind not only we have to have this flag but also store the "menu" message ID
+		// somewhere to keep things persistent.
 		savingMessageID := false
 
 		data, err := LoadData(dataPath)
@@ -181,7 +198,6 @@ func main() {
 			log.Printf("Error loading data: %s. I make a new one!", err)
 			data = &Data{}
 		}
-		chatID := update.Message.Chat.ID
 		idx := GetUserIdx(data, chatID)
 		if idx == -1 {
 			log.Printf("User %q not found. I make a new one!", chatID)
@@ -193,115 +209,212 @@ func main() {
 				msg.Text = DataSaveErrorStr
 			}
 		}
+		utcOffset := data.Users[idx].UTCOffset
+		fz := time.FixedZone("", 3600*utcOffset)
 
-		switch update.Message.Command() {
-		case "diabler":
-			savingMessageID = true
-			msg.Text = MainMenuStr
-			// fields := strings.Fields(update.Message.Text)
-			// if len(fields) < 2 {
-			// 	msg.Text = usageStr
-			// } else {
-			// 	data, err := LoadData(dataPath)
-			// 	if err != nil {
-			// 		log.Printf("Data load error: %s. I make a new one!", err)
-			// 		data = &Data{}
-			// 	}
+		// Handling inline menu callbacks
+		if update.CallbackQuery != nil {
+			callback := tgbotapi.NewCallback(update.CallbackQuery.ID, update.CallbackQuery.Data)
+			_, err := bot.Request(callback)
+			if err != nil {
+				log.Printf("Error requesting callback: %s", err)
+			}
 
-			// 	chatID := update.Message.Chat.ID
-			// 	idx := GetUserIdx(data, chatID)
-			// 	if idx == -1 {
-			// 		log.Printf("User %d not found. I make a new one!", chatID)
-			// 		data.Users = append(data.Users, NewUser(chatID))
-			// 		idx = GetUserIdx(data, chatID)
-			// 		err = SaveData(dataPath, data)
-			// 		if err != nil {
-			// 			log.Printf("Data save error: %s\n", err)
-			// 			msg.Text = DataSaveErrorStr
-			// 		}
-			// 	}
-			// 	utcOffset := data.Users[idx].UTCOffset
-			// 	fz := time.FixedZone("", 3600*utcOffset)
+			editMsg := tgbotapi.NewEditMessageTextAndMarkup(
+				chatID,
+				data.Users[idx].MenuMessageID,
+				"",
+				tgbotapi.NewInlineKeyboardMarkup(),
+			)
+			editMsg.ParseMode = tgbotapi.ModeMarkdown
 
-			// 	switch fields[1] {
-			// 	case "wb":
-			// 		switch len(fields) {
-			// 		case 2:
-			// 			// Show next WB spawn time and alarm timer if set
-			// 			rounded := RoundUpTime(wbs.Next().SpawnTime, time.Minute)
-			// 			remaining := time.Until(rounded)
-			// 			msg.Text = fmt.Sprintf(wbNextSpawnTimeStr,
-			// 				wbs.Next().Name,
-			// 				remaining.Round(time.Second).String(),
-			// 				RoundUpTime(wbs.Next().SpawnTime.In(fz), time.Minute).Format(time.DateTime),
-			// 				FormatUTCOffset(utcOffset),
-			// 			)
-			// 			var timerStr string
-			// 			if data.Users[idx].WBAlarmTimer > 0 {
-			// 				timerStr = fmt.Sprintf(WBTimerStr, PluralizeStr(data.Users[idx].WBAlarmTimer, "minute", "minutes", true))
-			// 			} else {
-			// 				timerStr = WBTimerDisabledStr
-			// 			}
-			// 			msg.Text = strings.Join([]string{msg.Text, timerStr}, "\n")
-			// 		case 3:
-			// 			// Set or remove the alarm timer
-			// 			prevMinutes := data.Users[idx].WBAlarmTimer
-			// 			minutes, err := strconv.Atoi(fields[2])
-			// 			if err != nil || minutes < 0 {
-			// 				minutes = 0
-			// 			}
-			// 			data.Users[idx].WBAlarmTimer = minutes
-			// 			data.Users[idx].WBNotifiedOn = time.Unix(0, 0)
-			// 			err = SaveData(dataPath, data)
-			// 			if err != nil {
-			// 				log.Printf("Data save error: %s\n", err)
-			// 				msg.Text = DataSaveErrorStr
-			// 			}
-			// 			if minutes > 0 {
-			// 				msg.Text = fmt.Sprintf(WBTimerChangedStr,
-			// 					PluralizeStr(prevMinutes, "minute", "minutes", true),
-			// 					PluralizeStr(minutes, "minute", "minutes", true),
-			// 				)
-			// 			} else {
-			// 				msg.Text = WBTimerDisabledStr
-			// 			}
-			// 			log.Printf("WB alarm timer set: Chat ID=%s, time=%s", data.Users[idx].ChatID, PluralizeStr(minutes, "minute", "minutes", true))
-			// 		default:
-			// 			msg.Text = usageStr
-			// 		}
+			switch update.CallbackQuery.Data {
+			//FIXME: Error editing "diabler-settings-time-offset-decrease" message: Too Many Requests: retry after 10
+			case "diabler-wb":
+				// Show next WB spawn time and alarm timer if set
+				rounded := RoundUpTime(wbs.Next().SpawnTime, time.Minute)
+				remaining := time.Until(rounded)
+				msg.Text = fmt.Sprintf(wbNextSpawnTimeStr,
+					wbs.Next().Name,
+					remaining.Round(time.Second).String(),
+					RoundUpTime(wbs.Next().SpawnTime.In(fz), time.Minute).Format(time.DateTime),
+					FormatUTCOffset(utcOffset),
+				)
+				var timerStr string
+				if data.Users[idx].WBAlarmTimer > 0 {
+					timerStr = fmt.Sprintf(WBTimerStr, PluralizeStr(data.Users[idx].WBAlarmTimer, "minute", "minutes", true))
+				} else {
+					timerStr = WBTimerDisabledStr
+				}
+				msg.Text = strings.Join([]string{msg.Text, timerStr}, "\n")
+			case "diabler-settings":
+				textLines := []string{
+					SettingsMenuStr,
+					fmt.Sprintf(TimeOffsetStr, FormatUTCOffset(data.Users[idx].UTCOffset)),
+					fmt.Sprintf(WBTimerMenuStr, PluralizeStr(data.Users[idx].WBAlarmTimer, "minute", "minutes", true)),
+				}
+				editMsg.Text = strings.Join(textLines, "\n")
+				editMsg.ReplyMarkup = &settingsMenuMarkup
+				_, err := bot.Send(editMsg)
+				if err != nil {
+					log.Printf("Error editing %q message: %s", "diabler-settings", err)
+				}
+			case "diabler-settings-time-offset":
+				textLines := []string{
+					SettingsMenuTimeOffsetStr,
+					fmt.Sprintf(TimeOffsetStr, FormatUTCOffset(data.Users[idx].UTCOffset)),
+				}
+				editMsg.Text = strings.Join(textLines, "\n")
+				editMsg.ReplyMarkup = &settingsTimeOffsetMenuMarkup
+				_, err := bot.Send(editMsg)
+				if err != nil {
+					log.Printf("Error editing %q message: %s", "diabler-settings-time-offset", err)
+				}
+			case "diabler-settings-time-offset-decrease":
+				data.Users[idx].UTCOffset -= 1
+				SaveData(dataPath, data)
+				data, _ = LoadData(dataPath)
+				textLines := []string{
+					SettingsMenuTimeOffsetStr,
+					fmt.Sprintf(TimeOffsetStr, FormatUTCOffset(data.Users[idx].UTCOffset)),
+				}
+				editMsg.Text = strings.Join(textLines, "\n")
+				editMsg.ReplyMarkup = &settingsTimeOffsetMenuMarkup
+				_, err = bot.Send(editMsg)
+				if err != nil {
+					log.Printf("Error editing %q message: %s", "diabler-settings-time-offset-decrease", err)
+				}
+			case "diabler-settings-time-offset-increase":
+				data.Users[idx].UTCOffset += 1
+				// TODO: error handling
+				SaveData(dataPath, data)
+				data, _ = LoadData(dataPath)
+				textLines := []string{
+					SettingsMenuTimeOffsetStr,
+					fmt.Sprintf(TimeOffsetStr, FormatUTCOffset(data.Users[idx].UTCOffset)),
+				}
+				editMsg.Text = strings.Join(textLines, "\n")
+				editMsg.ReplyMarkup = &settingsTimeOffsetMenuMarkup
+				_, err = bot.Send(editMsg)
+				if err != nil {
+					log.Printf("Error editing %q message: %s", "diabler-settings-time-offset-decrease", err)
+				}
+			case "diabler-settings-alarm":
+				textLines := []string{
+					SettingsMenuAlarmStr,
+				}
+				if data.Users[idx].WBAlarmTimer == 0 {
+					textLines = append(textLines, WBTimerDisabledMenuStr)
+				} else {
+					textLines = append(textLines, fmt.Sprintf(WBTimerMenuStr, PluralizeStr(data.Users[idx].WBAlarmTimer, "minute", "minutes", true)))
+				}
+				editMsg.Text = strings.Join(textLines, "\n")
+				editMsg.ReplyMarkup = &settingsAlarmMenuMarkup
+				_, err = bot.Send(editMsg)
+				if err != nil {
+					log.Printf("Error editing %q message: %s", "diabler-settings-alarm", err)
+				}
+			case "diabler-settings-alarm-disable":
+				data.Users[idx].WBAlarmTimer = 0
+				data.Users[idx].WBNotifiedOn = time.Unix(0, 0)
+				// TODO: error handling
+				SaveData(dataPath, data)
+				data, _ = LoadData(dataPath)
+				textLines := []string{
+					SettingsMenuAlarmStr,
+				}
+				if data.Users[idx].WBAlarmTimer == 0 {
+					textLines = append(textLines, WBTimerDisabledMenuStr)
+				} else {
+					textLines = append(textLines, fmt.Sprintf(WBTimerMenuStr, PluralizeStr(data.Users[idx].WBAlarmTimer, "minute", "minutes", true)))
+				}
+				editMsg.Text = strings.Join(textLines, "\n")
+				editMsg.ReplyMarkup = &settingsAlarmMenuMarkup
+				_, err = bot.Send(editMsg)
+				if err != nil {
+					log.Printf("Error editing %q message: %s", "diabler-settings-alarm-reset", err)
+				}
+			case "diabler-main":
+				editMsg.Text = MainMenuStr
+				editMsg.ReplyMarkup = &mainMenuMarkup
+				_, err := bot.Send(editMsg)
+				if err != nil {
+					log.Printf("Error editing %q message: %s", "diabler-main", err)
+				}
+			}
 
-			// 	case "utc":
-			// 		switch len(fields) {
-			// 		case 2:
-			// 			// Show current UTC offset
-			// 			msg.Text = fmt.Sprintf(UTCOffsetStr, FormatUTCOffset(utcOffset))
-			// 		case 3:
-			// 			// Set UTC offset
-			// 			prevOffset := data.Users[idx].UTCOffset
-			// 			utcOffset, err = strconv.Atoi(fields[2])
-			// 			if err != nil {
-			// 				utcOffset = 0
-			// 			}
-			// 			data.Users[idx].UTCOffset = utcOffset
-			// 			err = SaveData(dataPath, data)
-			// 			if err != nil {
-			// 				log.Printf("Data save error: %s", err)
-			// 				msg.Text = DataSaveErrorStr
-			// 			} else {
-			// 				msg.Text = fmt.Sprintf(UTCOffsetSetStr, FormatUTCOffset(prevOffset), FormatUTCOffset(utcOffset))
-			// 			}
-			// 		}
-			// 	default:
-			// 		msg.Text = usageStr
-			// 	}
-			// }
-		default:
+			// More callback handling
+			// FIXME: Error editing "diabler-settings-alarm-decrease-" message: Bad Request: message is not modified:
+			// specified new message content and reply markup are exactly the same as a current content and reply markup of the message
+			if strings.HasPrefix(update.CallbackQuery.Data, "diabler-settings-alarm-decrease-") {
+				minutes := ParseAlarmCallbackData(update.CallbackQuery.Data)
+				if data.Users[idx].WBAlarmTimer-minutes >= 0 {
+					data.Users[idx].WBAlarmTimer -= minutes
+				} else {
+					data.Users[idx].WBAlarmTimer = 0
+				}
+				data.Users[idx].WBNotifiedOn = time.Unix(0, 0)
+				// TODO: error handling
+				SaveData(dataPath, data)
+				data, _ = LoadData(dataPath)
+				textLines := []string{
+					SettingsMenuAlarmStr,
+				}
+				if data.Users[idx].WBAlarmTimer == 0 {
+					textLines = append(textLines, WBTimerDisabledMenuStr)
+				} else {
+					textLines = append(textLines, fmt.Sprintf(WBTimerMenuStr, PluralizeStr(data.Users[idx].WBAlarmTimer, "minute", "minutes", true)))
+				}
+				editMsg.Text = strings.Join(textLines, "\n")
+				editMsg.ReplyMarkup = &settingsAlarmMenuMarkup
+				_, err = bot.Send(editMsg)
+				if err != nil {
+					log.Printf("Error editing %q message: %s", "diabler-settings-alarm-decrease-", err)
+				}
+			}
+			if strings.HasPrefix(update.CallbackQuery.Data, "diabler-settings-alarm-increase-") {
+				minutes := ParseAlarmCallbackData(update.CallbackQuery.Data)
+				data.Users[idx].WBAlarmTimer += minutes
+				data.Users[idx].WBNotifiedOn = time.Unix(0, 0)
+				// TODO: error handling
+				SaveData(dataPath, data)
+				data, _ = LoadData(dataPath)
+				textLines := []string{
+					SettingsMenuAlarmStr,
+				}
+				if data.Users[idx].WBAlarmTimer == 0 {
+					textLines = append(textLines, WBTimerDisabledMenuStr)
+				} else {
+					textLines = append(textLines, fmt.Sprintf(WBTimerMenuStr, PluralizeStr(data.Users[idx].WBAlarmTimer, "minute", "minutes", true)))
+				}
+				editMsg.Text = strings.Join(textLines, "\n")
+				editMsg.ReplyMarkup = &settingsAlarmMenuMarkup
+				_, err = bot.Send(editMsg)
+				if err != nil {
+					log.Printf("Error editing %q message: %s", "diabler-settings-alarm-increase-", err)
+				}
+			}
+		}
+
+		if update.Message != nil {
+			// Handling chat commands
+			switch update.Message.Command() {
+			case "diabler":
+				savingMessageID = true
+				msg.Text = MainMenuStr
+				msg.ReplyMarkup = mainMenuMarkup
+			default:
+				continue
+			}
+		}
+
+		if msg.Text == "" {
 			continue
 		}
 
 		sentMsg, err := bot.Send(msg)
 		if err != nil {
-			log.Printf("Send message error: %s", err)
+			log.Printf("Error sending message: %s", err)
 		}
 		if savingMessageID {
 			data.Users[idx].MenuMessageID = sentMsg.MessageID
@@ -344,21 +457,77 @@ func PluralizeStr(n int, singular string, plural string, includeN bool) (result 
 	return result
 }
 
-var usageStr string = "*Diabler Usage*\n\n" +
-	"`/diabler utc` | Show your local UTC offset\n" +
-	"`/diabler utc <hours>` | Set UTC offset to *<hours>*. Can be negative\n\n" +
-	"`/diabler wb` | Show next World Boss\n" +
-	"`/diabler wb <minutes>` | Set the alarm to *<minutes>* or *0* to disable"
+func ParseAlarmCallbackData(s string) (minutes int) {
+	fields := strings.Split(s, "-")
+	minutes, _ = strconv.Atoi(strings.Replace(fields[len(fields)-1], "m", "", -1))
+	return minutes
+}
 
 const (
-	wbNextSpawnTimeStr = "*%s* | `%s`\n%s %s."
-	UTCOffsetStr       = "Time Offset | `%s`\nUse `/diabler utc <hours>` command to change it."
-	UTCOffsetSetStr    = "Time Offset | `%s` \u2794 `%s`"
-	DataLoadErrorStr   = "Error 37. Please try again later."
-	DataSaveErrorStr   = "Error 37. Please try again later."
-	WBTimerDisabledStr = "Alarm | `Disabled`"
-	WBTimerStr         = "Alarm | `%s`"
-	WBTimerChangedStr  = "Alarm | `%s` \u2794 `%s`"
-	WBAlarmStr         = "*%s* | `%s`"
-	MainMenuStr        = "Diabler"
+	wbNextSpawnTimeStr        = "*%s* | `%s`\n%s %s."
+	DataSaveErrorStr          = "Error 37. Please try again later."
+	WBTimerDisabledStr        = "Alarm | `Disabled`"
+	WBTimerDisabledMenuStr    = "Alarm: `Disabled`"
+	WBTimerStr                = "Alarm | `%s`"
+	WBTimerMenuStr            = "Alarm: `%s`"
+	WBAlarmStr                = "*%s* | `%s`"
+	MainMenuStr               = "*Diabler*"
+	SettingsMenuStr           = "*Diabler | Settings*"
+	SettingsMenuTimeOffsetStr = "*Diabler | Settings | Time offset*"
+	SettingsMenuAlarmStr      = "*Diabler | Settings | Alarm*"
+	TimeOffsetStr             = "Time offset: `%s`"
 )
+
+var mainMenuMarkup = tgbotapi.NewInlineKeyboardMarkup(
+	tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("👿 Next World Boss", "diabler-wb"),
+	),
+	tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("\u2699 Settings", "diabler-settings"),
+	),
+)
+
+var settingsMenuMarkup = tgbotapi.NewInlineKeyboardMarkup(
+	tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🌎 Time offset", "diabler-settings-time-offset"),
+		tgbotapi.NewInlineKeyboardButtonData("⏰ Alarm", "diabler-settings-alarm"),
+	),
+	tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("Main menu", "diabler-main"),
+	),
+)
+
+var settingsTimeOffsetMenuMarkup = tgbotapi.NewInlineKeyboardMarkup(
+	tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("-1 hour", "diabler-settings-time-offset-decrease"),
+		tgbotapi.NewInlineKeyboardButtonData("+1 hour", "diabler-settings-time-offset-increase"),
+	),
+	tgbotapi.NewInlineKeyboardRow(
+		returnToSettingsButton,
+	),
+	tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("Main menu", "diabler-main"),
+	),
+)
+
+var settingsAlarmMenuMarkup = tgbotapi.NewInlineKeyboardMarkup(
+	tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("-30", "diabler-settings-alarm-decrease-30m"),
+		tgbotapi.NewInlineKeyboardButtonData("-5", "diabler-settings-alarm-decrease-5m"),
+		tgbotapi.NewInlineKeyboardButtonData("-1", "diabler-settings-alarm-decrease-1m"),
+		tgbotapi.NewInlineKeyboardButtonData("+1", "diabler-settings-alarm-increase-1m"),
+		tgbotapi.NewInlineKeyboardButtonData("+5", "diabler-settings-alarm-increase-5m"),
+		tgbotapi.NewInlineKeyboardButtonData("+30", "diabler-settings-alarm-increase-30m"),
+	),
+	tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("❌ Disable", "diabler-settings-alarm-disable"),
+	),
+	tgbotapi.NewInlineKeyboardRow(
+		returnToSettingsButton,
+	),
+	tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("Main menu", "diabler-main"),
+	),
+)
+
+var returnToSettingsButton = tgbotapi.NewInlineKeyboardButtonData("⬅️ Return to Settings", "diabler-settings")
