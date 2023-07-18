@@ -63,7 +63,7 @@ func UpdateTimers(wbs *events.WorldBossSchedule, bot *tgbotapi.BotAPI) {
 		}
 		chatID, err := strconv.ParseInt(u.ChatID, 10, 64)
 		if err != nil {
-			log.Printf("Error parsing Chat ID %d: %s", u.ChatID, err)
+			log.Printf("Error parsing Chat ID %q: %s", u.ChatID, err)
 			continue
 		}
 		remaining := time.Until(wb.SpawnTime)
@@ -276,9 +276,12 @@ func main() {
 				}
 			case "diabler-settings-time-offset-reset":
 				data.Users[idx].UTCOffset = 0
-				// TODO: error handling
-				SaveData(dataPath, data)
-				data, _ = LoadData(dataPath)
+				saveDataErr := SaveData(dataPath, data)
+				data, loadDataErr := LoadData(dataPath)
+				err := errors.Join(saveDataErr, loadDataErr)
+				if err != nil {
+					log.Printf("%q error(s): %s", "diabler-settings-time-offset-reset", err)
+				}
 				textLines := []string{
 					SettingsMenuTimeOffsetStr,
 					fmt.Sprintf(TimeOffsetStr, FormatUTCOffset(data.Users[idx].UTCOffset)),
@@ -295,9 +298,12 @@ func main() {
 				} else {
 					data.Users[idx].UTCOffset -= 1
 				}
-				// TODO: error handling
-				SaveData(dataPath, data)
-				data, _ = LoadData(dataPath)
+				saveDataErr := SaveData(dataPath, data)
+				data, loadDataErr := LoadData(dataPath)
+				err := errors.Join(saveDataErr, loadDataErr)
+				if err != nil {
+					log.Printf("%q error(s): %s", "diabler-settings-time-offset-decrease", err)
+				}
 				textLines := []string{
 					SettingsMenuTimeOffsetStr,
 					fmt.Sprintf(TimeOffsetStr, FormatUTCOffset(data.Users[idx].UTCOffset)),
@@ -314,9 +320,12 @@ func main() {
 				} else {
 					data.Users[idx].UTCOffset += 1
 				}
-				// TODO: error handling
-				SaveData(dataPath, data)
-				data, _ = LoadData(dataPath)
+				saveDataErr := SaveData(dataPath, data)
+				data, loadDataErr := LoadData(dataPath)
+				err := errors.Join(saveDataErr, loadDataErr)
+				if err != nil {
+					log.Printf("%q error(s): %s", "diabler-settings-time-offset-increase", err)
+				}
 				textLines := []string{
 					SettingsMenuTimeOffsetStr,
 					fmt.Sprintf(TimeOffsetStr, FormatUTCOffset(data.Users[idx].UTCOffset)),
@@ -345,9 +354,12 @@ func main() {
 			case "diabler-settings-alarm-disable":
 				data.Users[idx].WBAlarmTimer = 0
 				data.Users[idx].WBNotifiedOn = time.Unix(0, 0)
-				// TODO: error handling
-				SaveData(dataPath, data)
-				data, _ = LoadData(dataPath)
+				saveDataErr := SaveData(dataPath, data)
+				data, loadDataErr := LoadData(dataPath)
+				err := errors.Join(saveDataErr, loadDataErr)
+				if err != nil {
+					log.Printf("%q error(s): %s", "diabler-settings-alarm-disable", err)
+				}
 				textLines := []string{
 					SettingsMenuAlarmStr,
 				}
@@ -360,7 +372,7 @@ func main() {
 				editMsg.ReplyMarkup = &settingsAlarmMenuMarkup
 				_, err = bot.Send(editMsg)
 				if err != nil {
-					log.Printf("Error editing %q message: %s", "diabler-settings-alarm-reset", err)
+					log.Printf("Error editing %q message: %s", "diabler-settings-alarm-disable", err)
 				}
 			case "diabler-main":
 				editMsg.Text = MainMenuStr
@@ -382,9 +394,12 @@ func main() {
 					data.Users[idx].WBAlarmTimer = 0
 				}
 				data.Users[idx].WBNotifiedOn = time.Unix(0, 0)
-				// TODO: error handling
-				SaveData(dataPath, data)
-				data, _ = LoadData(dataPath)
+				saveDataErr := SaveData(dataPath, data)
+				data, loadDataErr := LoadData(dataPath)
+				err := errors.Join(saveDataErr, loadDataErr)
+				if err != nil {
+					log.Printf("%q error(s): %s", "diabler-settings-alarm-decrease-", err)
+				}
 				textLines := []string{
 					SettingsMenuAlarmStr,
 				}
@@ -404,9 +419,12 @@ func main() {
 				minutes := ParseAlarmCallbackData(update.CallbackQuery.Data)
 				data.Users[idx].WBAlarmTimer += minutes
 				data.Users[idx].WBNotifiedOn = time.Unix(0, 0)
-				// TODO: error handling
-				SaveData(dataPath, data)
-				data, _ = LoadData(dataPath)
+				saveDataErr := SaveData(dataPath, data)
+				data, loadDataErr := LoadData(dataPath)
+				err := errors.Join(saveDataErr, loadDataErr)
+				if err != nil {
+					log.Printf("%q error(s): %s", "diabler-settings-alarm-increase-", err)
+				}
 				textLines := []string{
 					SettingsMenuAlarmStr,
 				}
@@ -525,6 +543,7 @@ var settingsMenuMarkup = tgbotapi.NewInlineKeyboardMarkup(
 	),
 )
 
+// TODO: add -15m and +15m offsets
 var settingsTimeOffsetMenuMarkup = tgbotapi.NewInlineKeyboardMarkup(
 	tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("-1 hour", "diabler-settings-time-offset-decrease"),
