@@ -63,7 +63,7 @@ func UpdateTimers(wbs *events.WorldBossSchedule, bot *tgbotapi.BotAPI) {
 		}
 		chatID, err := strconv.ParseInt(u.ChatID, 10, 64)
 		if err != nil {
-			log.Printf("Error parsing Chat ID %q: %s", u.ChatID, err)
+			log.Printf("Error parsing Chat ID %d: %s", u.ChatID, err)
 			continue
 		}
 		remaining := time.Until(wb.SpawnTime)
@@ -93,7 +93,7 @@ func MakeTimer(chatID int64, alarmTime int, duration time.Duration, bot *tgbotap
 	msg.Text = fmt.Sprintf(WBAlarmStr, boss.Name, PluralizeStr(alarmTime, "minute", "minutes", true))
 	_, err := bot.Send(msg)
 	if err != nil {
-		log.Printf("Error sending message to Chat ID %q: %s", chatID, err)
+		log.Printf("Error sending message to Chat ID %d: %s", chatID, err)
 	}
 }
 
@@ -200,7 +200,7 @@ func main() {
 		}
 		idx := GetUserIdx(data, chatID)
 		if idx == -1 {
-			log.Printf("User %q not found. I make a new one!", chatID)
+			log.Printf("User %d not found. I make a new one!", chatID)
 			data.Users = append(data.Users, NewUser(chatID))
 			idx = GetUserIdx(data, chatID)
 			err := SaveData(dataPath, data)
