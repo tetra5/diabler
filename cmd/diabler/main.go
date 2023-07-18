@@ -72,7 +72,7 @@ func UpdateTimers(wbs *events.WorldBossSchedule, bot *tgbotapi.BotAPI) {
 				continue
 			}
 			timerDuration := remaining - time.Duration(u.WBAlarmTimer)*time.Minute
-			log.Printf("Setting %s timer for %q ...", timerDuration.String(), chatID)
+			log.Printf("Setting %s timer for %d ...", timerDuration.String(), chatID)
 			go MakeTimer(chatID, u.WBAlarmTimer, timerDuration, bot, wb)
 			data.Users[i].WBNotifiedOn = wb.SpawnTime
 			err = SaveData(dataPath, data)
