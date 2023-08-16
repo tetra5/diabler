@@ -1,6 +1,11 @@
 # diabler
 Diablo IV themed Telegram bot.
 
+## Cloning
+```
+git clone https://github.com/tetra5/diabler.git
+```
+
 ## Building
 ```sh
 docker build --tag diabler .
