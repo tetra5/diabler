@@ -72,6 +72,9 @@ func UpdateTimers(wbs *events.WorldBossSchedule, bot *tgbotapi.BotAPI) {
 				continue
 			}
 			timerDuration := remaining - time.Duration(u.WBAlarmTimer)*time.Minute
+			if timerDuration < 0 {
+				continue
+			}
 			log.Printf("Setting %s timer for %d ...", timerDuration.String(), chatID)
 			go MakeTimer(chatID, u.WBAlarmTimer, timerDuration, bot, wb)
 			data.Users[i].WBNotifiedOn = wb.SpawnTime
@@ -237,7 +240,7 @@ func main() {
 				msg.Text = fmt.Sprintf(wbNextSpawnTimeStr,
 					wbs.Next().Name,
 					remaining.Round(time.Second).String(),
-					RoundUpTime(wbs.Next().SpawnTime.In(fz), time.Minute).Format(time.DateTime),
+					wbs.Next().SpawnTime.In(fz).Format(time.DateTime),
 					FormatUTCOffset(utcOffset),
 				)
 				var timerStr string
@@ -417,7 +420,11 @@ func main() {
 			}
 			if strings.HasPrefix(update.CallbackQuery.Data, "diabler-settings-alarm-increase-") {
 				minutes := ParseAlarmCallbackData(update.CallbackQuery.Data)
-				data.Users[idx].WBAlarmTimer += minutes
+				if data.Users[idx].WBAlarmTimer+minutes <= 180 {
+					data.Users[idx].WBAlarmTimer += minutes
+				} else {
+					data.Users[idx].WBAlarmTimer = 180
+				}
 				data.Users[idx].WBNotifiedOn = time.Unix(0, 0)
 				saveDataErr := SaveData(dataPath, data)
 				data, loadDataErr := LoadData(dataPath)
