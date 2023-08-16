@@ -29,7 +29,9 @@ func (wbs *WorldBossSchedule) Init() {
 		3: "Ashava",
 	}
 	wbs.spawnPattern = []int{
-		3, 3, 3, 2, 2, 1, 1, 1, 3, 3, 2, 2, 2, 1, 1,
+		1, 1, 1, 2, 2, 3, 3, 3, 1, 1, 2, 2, 2, 3, 3,
+		1, 1, 1, 2, 2, 3, 3, 3, 1, 1, 2, 2, 2, 3, 3,
+		1, 1, 1, 2, 2, 3, 3,
 	}
 
 	wbs.minutePattern = []float64{353, 353.49, 325.71, 353.49, 325.22} // Repeats
@@ -44,10 +46,12 @@ func (wbs *WorldBossSchedule) Init() {
 
 	pLen := len(wbs.spawnPattern)
 	mLen := len(wbs.minutePattern)
-	var bossName string
 	for i, p, m := 1, 1, 1; i < wbs.Length; i++ {
 		if m >= mLen {
 			m = 0
+		}
+		if p >= pLen {
+			p = 0
 		}
 		t := wbs.Entries[i-1].SpawnTime.Add(time.Duration(wbs.minutePattern[m] * float64(time.Minute)))
 		// Spawn time must belong to specific time intervals otherwise we add 2 hours
@@ -72,13 +76,8 @@ func (wbs *WorldBossSchedule) Init() {
 			t = t.Add(time.Duration(2 * time.Hour))
 		}
 
-		if p < pLen {
-			bossName = wbs.bossNames[wbs.spawnPattern[p]]
-		} else {
-			bossName = wbs.Entries[i-15].Name // Spawn pattern repeats
-		}
 		wbs.Entries[i] = WorldBoss{
-			Name:      bossName,
+			Name:      wbs.bossNames[wbs.spawnPattern[p]],
 			SpawnTime: t,
 		}
 		p++
