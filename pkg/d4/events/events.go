@@ -28,25 +28,18 @@ func (wbs *WorldBossSchedule) Init() {
 		2: "Avarice",
 		3: "Ashava",
 	}
-
-	// Repeats as [22:] after the first complete loop
 	wbs.spawnPattern = []int{
-		1, 1, 1, 2, 2, 3, 3, 3, 1, 1,
-		2, 2, 3, 3, 3, 1, 1, 2, 2, 2,
-		3, 3,
-		1, 1, 1, 2, 2, 3, 3, 3, 1, 1,
-		2, 2, 2, 3, 3, 1, 1, 1, 2, 2,
-		3, 3, 3, 1, 1, 2, 2, 2, 3, 3,
+		3, 3, 3, 2, 2, 1, 1, 1, 3, 3, 2, 2, 2, 1, 1,
 	}
 
-	wbs.minutePattern = []float64{325.22, 353.49, 325.22, 353.49, 353.49} // Repeats
+	wbs.minutePattern = []float64{353, 353.49, 325.71, 353.49, 325.22} // Repeats
 
 	wbs.lastSpawnIdx = 0
 	wbs.Entries = make(map[int]WorldBoss, wbs.Length)
 
-	wbs.Entries[0] = WorldBoss{ // First ever Wandering Death spawned at 6.11.23 06:06:00 UTC
+	wbs.Entries[0] = WorldBoss{ // First ever WB spawn
 		Name:      wbs.bossNames[1],
-		SpawnTime: time.Date(2023, 6, 11, 6, 6, 0, 0, time.UTC),
+		SpawnTime: time.Date(2023, 6, 11, 6, 0, 0, 0, time.UTC),
 	}
 
 	pLen := len(wbs.spawnPattern)
@@ -82,7 +75,7 @@ func (wbs *WorldBossSchedule) Init() {
 		if p < pLen {
 			bossName = wbs.bossNames[wbs.spawnPattern[p]]
 		} else {
-			bossName = wbs.Entries[i-30].Name // Spawn pattern repeats
+			bossName = wbs.Entries[i-15].Name // Spawn pattern repeats
 		}
 		wbs.Entries[i] = WorldBoss{
 			Name:      bossName,
