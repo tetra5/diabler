@@ -2,7 +2,7 @@
 Diablo IV themed Telegram bot.
 
 ## Cloning
-```
+```sh
 git clone https://github.com/tetra5/diabler.git
 ```
 
