@@ -8,5 +8,5 @@ docker build --tag diabler .
 
 ## Running
 ```sh
-docker run -v ./diabler-data:/data --env TELEGRAM_TOKEN="<your_token>" diabler
+docker run -v ./diabler-data:/data --env TELEGRAM_TOKEN="<your_token>" -d --name diabler diabler
 ```
