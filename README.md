@@ -1,5 +1,6 @@
 # diabler
 Diablo IV themed Telegram bot.
+### No longer maintained as of Season 2.
 
 ## Cloning
 ```sh
