@@ -23,6 +23,7 @@ type WorldBoss struct {
 }
 
 func (wbs *WorldBossSchedule) Init() {
+	// Patterns are broken as of Season 2.
 	wbs.bossNames = map[int]string{
 		1: "Wandering Death",
 		2: "Avarice",
